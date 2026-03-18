@@ -16,10 +16,9 @@
     "dev": "echo 'no-op'"
   },
   "dependencies": {
-    "better-sqlite3": "^11.0.0"
+    "sql.js": "^1.14.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^20.0.0"
   }
 }

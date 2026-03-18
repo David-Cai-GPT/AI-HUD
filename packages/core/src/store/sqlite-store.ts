@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import initSqlJs, { type SqlJsStatic } from 'sql.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -44,16 +44,58 @@ CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_model ON sessions(model);
 `;
 
-export class SqliteStore implements SessionStore {
-  private readonly db: Database.Database;
+type Db = InstanceType<SqlJsStatic['Database']>;
 
-  constructor(dbPath: string = DEFAULT_DB_PATH) {
-    const dir = path.dirname(dbPath);
+function rowFromColumnsValues(
+  columns: string[],
+  rowValues: unknown[]
+): Record<string, unknown> {
+  const row: Record<string, unknown> = {};
+  for (let i = 0; i < columns.length; i++) {
+    row[columns[i]] = rowValues[i];
+  }
+  return row;
+}
+
+function rowsFromResult(columns: string[], values: unknown[][]): Record<string, unknown>[] {
+  return values.map((vals) => {
+    const row: Record<string, unknown> = {};
+    for (let i = 0; i < columns.length; i++) {
+      row[columns[i]] = vals[i];
+    }
+    return row;
+  });
+}
+
+export class SqliteStore implements SessionStore {
+  private db: Db | null = null;
+  private initPromise: Promise<void> | null = null;
+
+  constructor(private readonly dbPath: string = DEFAULT_DB_PATH) {}
+
+  private async ensureInit(): Promise<void> {
+    if (this.db) return;
+    if (!this.initPromise) {
+      this.initPromise = this.doInit();
+    }
+    await this.initPromise;
+  }
+
+  private async doInit(): Promise<void> {
+    const SQL = await initSqlJs();
+    const dir = path.dirname(this.dbPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    this.db = new Database(dbPath);
-    this.db.exec(CREATE_TABLE_SQL);
+    let db: Db;
+    if (fs.existsSync(this.dbPath)) {
+      const buf = fs.readFileSync(this.dbPath);
+      db = new SQL.Database(buf);
+    } else {
+      db = new SQL.Database();
+    }
+    db.run(CREATE_TABLE_SQL);
+    this.db = db;
   }
 
   private sessionToRow(session: Session): Record<string, unknown> {
@@ -135,64 +177,94 @@ export class SqliteStore implements SessionStore {
   }
 
   async append(session: Session): Promise<void> {
+    await this.ensureInit();
     const row = this.sessionToRow(session);
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO sessions (
+    const r = this.db!;
+    r.run(
+      `INSERT OR REPLACE INTO sessions (
         id, source, started_at, ended_at, project_path, model,
         input_tokens, output_tokens, cache_read, cache_create,
         cost_amount, cost_currency, raw_meta
       ) VALUES (
-        @id, @source, @started_at, @ended_at, @project_path, @model,
-        @input_tokens, @output_tokens, @cache_read, @cache_create,
-        @cost_amount, @cost_currency, @raw_meta
-      )
-    `);
-    stmt.run(row);
+        :id, :source, :started_at, :ended_at, :project_path, :model,
+        :input_tokens, :output_tokens, :cache_read, :cache_create,
+        :cost_amount, :cost_currency, :raw_meta
+      )`,
+      {
+        ':id': row.id,
+        ':source': row.source,
+        ':started_at': row.started_at,
+        ':ended_at': row.ended_at,
+        ':project_path': row.project_path,
+        ':model': row.model,
+        ':input_tokens': row.input_tokens,
+        ':output_tokens': row.output_tokens,
+        ':cache_read': row.cache_read,
+        ':cache_create': row.cache_create,
+        ':cost_amount': row.cost_amount,
+        ':cost_currency': row.cost_currency,
+        ':raw_meta': row.raw_meta,
+      }
+    );
   }
 
   async query(filter: SessionFilter): Promise<Session[]> {
+    await this.ensureInit();
     const conditions: string[] = [];
     const params: Record<string, unknown> = {};
 
     if (filter.source != null) {
-      conditions.push('source = @source');
-      params.source = filter.source;
+      conditions.push('source = :source');
+      params[':source'] = filter.source;
     }
     if (filter.model != null) {
-      conditions.push('model = @model');
-      params.model = filter.model;
+      conditions.push('model = :model');
+      params[':model'] = filter.model;
     }
     if (filter.from != null) {
-      conditions.push('started_at >= @from');
-      params.from = filter.from;
+      conditions.push('started_at >= :from');
+      params[':from'] = filter.from;
     }
     if (filter.to != null) {
-      conditions.push('started_at <= @to');
-      params.to = filter.to;
+      conditions.push('started_at <= :to');
+      params[':to'] = filter.to;
     }
 
     const whereClause =
       conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    if (filter.limit != null && Number.isFinite(filter.limit)) {
-      params._limit = Math.max(1, Math.floor(filter.limit));
-    }
     const limitClause =
-      params._limit != null ? 'LIMIT @_limit' : '';
+      filter.limit != null && Number.isFinite(filter.limit)
+        ? `LIMIT ${Math.max(1, Math.floor(filter.limit))}`
+        : '';
 
     const sql = `SELECT * FROM sessions ${whereClause} ORDER BY started_at DESC ${limitClause}`.trim();
-    const stmt = this.db.prepare(sql);
-    const rows = stmt.all(params) as Record<string, unknown>[];
-
+    const results = this.db!.exec(sql, params);
+    if (results.length === 0) return [];
+    const { columns, values } = results[0];
+    const rows = rowsFromResult(columns, values);
     return rows.map((r) => this.rowToSession(r));
   }
 
   async getById(id: string): Promise<Session | null> {
-    const stmt = this.db.prepare('SELECT * FROM sessions WHERE id = ?');
-    const row = stmt.get(id) as Record<string, unknown> | undefined;
-    return row != null ? this.rowToSession(row) : null;
+    await this.ensureInit();
+    const results = this.db!.exec('SELECT * FROM sessions WHERE id = :id', {
+      ':id': id,
+    });
+    if (results.length === 0 || results[0].values.length === 0) return null;
+    const { columns, values } = results[0];
+    const row = rowFromColumnsValues(columns, values[0]!);
+    return this.rowToSession(row);
   }
 
   close(): void {
-    this.db.close();
+    if (this.db) {
+      try {
+        const data = this.db.export();
+        fs.writeFileSync(this.dbPath, Buffer.from(data));
+      } finally {
+        this.db.close();
+      }
+      this.db = null;
+    }
   }
 }
