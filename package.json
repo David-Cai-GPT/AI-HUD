@@ -4,7 +4,7 @@
   "scripts": {
     "build": "pnpm -r run build",
     "dev": "pnpm -r run dev",
-    "cli": "pnpm --filter ./packages/cli exec -- ai-hud"
+    "cli": "pnpm --filter ./packages/cli exec node dist/index.js"
   },
   "devDependencies": {
     "typescript": "^5.3.0"
