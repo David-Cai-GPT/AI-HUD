@@ -93,8 +93,14 @@ export async function startServer(port: number = DEFAULT_PORT): Promise<void> {
   try {
     await app.listen({ port, host: '0.0.0.0' });
     console.log(`AI-HUD Web server listening on http://localhost:${port}`);
-  } catch (err) {
-    app.log.error(err);
+  } catch (err: unknown) {
+    const e = err as NodeJS.ErrnoException;
+    if (e?.code === 'EADDRINUSE') {
+      console.error(`\n端口 ${port} 已被占用。请使用 --port 指定其他端口，例如：`);
+      console.error(`  ai-hud serve --port 3848\n`);
+    } else {
+      app.log.error(err);
+    }
     process.exit(1);
   }
 }
