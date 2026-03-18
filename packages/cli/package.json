@@ -13,5 +13,8 @@
     "@ai-hud/core": "workspace:*",
     "@ai-hud/web": "workspace:*",
     "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
   }
 }

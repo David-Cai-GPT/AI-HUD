@@ -66,7 +66,7 @@ export async function runWithCapture(
     const stdout = proc.stdout;
     if (!stdout) {
       proc.once('error', reject);
-      proc.once('close', (code) => {
+      proc.once('close', (code: number | null) => {
         if (code !== 0) reject(new Error(`opencode exited with code ${code}`));
         else resolve();
       });
@@ -140,7 +140,7 @@ export async function runWithCapture(
     });
 
     proc.once('error', reject);
-    proc.once('close', async (code) => {
+    proc.once('close', async (code: number | null) => {
       if (code !== 0) {
         reject(new Error(`opencode exited with code ${code}`));
         return;
