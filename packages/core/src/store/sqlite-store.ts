@@ -86,10 +86,14 @@ export class SqliteStore implements SessionStore {
   }
 
   private rowToSession(row: Record<string, unknown>): Session {
-    const rawMeta: RawMeta | null =
-      typeof row.raw_meta === 'string' && row.raw_meta
-        ? (JSON.parse(row.raw_meta) as RawMeta)
-        : null;
+    let rawMeta: RawMeta | null = null;
+    if (typeof row.raw_meta === 'string' && row.raw_meta) {
+      try {
+        rawMeta = JSON.parse(row.raw_meta) as RawMeta;
+      } catch {
+        rawMeta = null;
+      }
+    }
 
     const contextUsage: ContextUsage | undefined =
       row.input_tokens != null || row.output_tokens != null
@@ -169,11 +173,11 @@ export class SqliteStore implements SessionStore {
 
     const whereClause =
       conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    if (filter.limit != null) {
-      params._limit = Math.max(1, filter.limit);
+    if (filter.limit != null && Number.isFinite(filter.limit)) {
+      params._limit = Math.max(1, Math.floor(filter.limit));
     }
     const limitClause =
-      filter.limit != null ? 'LIMIT @_limit' : '';
+      params._limit != null ? 'LIMIT @_limit' : '';
 
     const sql = `SELECT * FROM sessions ${whereClause} ORDER BY started_at DESC ${limitClause}`.trim();
     const stmt = this.db.prepare(sql);
