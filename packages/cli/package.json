@@ -5,10 +5,12 @@
     "ai-hud": "./dist/index.js"
   },
   "scripts": {
-    "build": "echo 'no-op'",
+    "build": "tsc",
     "dev": "echo 'no-op'"
   },
   "dependencies": {
-    "@ai-hud/core": "workspace:*"
+    "@ai-hud/adapters": "workspace:*",
+    "@ai-hud/core": "workspace:*",
+    "commander": "^12.0.0"
   }
 }
