@@ -28,8 +28,13 @@ program
   .command('serve')
   .description('Start Web server with background collection')
   .option('-p, --port <port>', 'Port to listen on', String(DEFAULT_PORT))
-  .action(async (opts: { port: string }) => {
-    const port = Math.max(1, parseInt(opts.port, 10) || DEFAULT_PORT);
+  .action(async function (this: { opts: () => { port?: string } }) {
+    let portOpt = this.opts().port ?? String(DEFAULT_PORT);
+    const portIdx = process.argv.indexOf('--port');
+    if (portIdx >= 0 && process.argv[portIdx + 1]) {
+      portOpt = process.argv[portIdx + 1];
+    }
+    const port = Math.max(1, parseInt(String(portOpt), 10) || DEFAULT_PORT);
     await startServer(port);
 
     const store = new SqliteStore();
