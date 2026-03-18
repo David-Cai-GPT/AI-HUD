@@ -12,12 +12,23 @@
     .card { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); min-width: 160px; }
     .card .label { font-size: 12px; color: #666; text-transform: uppercase; margin-bottom: 4px; }
     .card .value { font-size: 24px; font-weight: 600; color: #111; }
-    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+    .tab { padding: 8px 16px; border: none; background: #e8e8e8; border-radius: 6px; cursor: pointer; font-size: 14px; }
+    .tab:hover { background: #ddd; }
+    .tab.active { background: #333; color: #fff; }
+    .table-wrap { background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    table { width: 100%; border-collapse: collapse; }
     th, td { padding: 12px 16px; text-align: left; }
-    th { background: #f8f8f8; font-size: 12px; color: #666; text-transform: uppercase; }
-    tr:nth-child(even) { background: #fafafa; }
+    th { background: #f8f8f8; font-size: 12px; color: #666; text-transform: uppercase; font-weight: 500; }
+    td { font-size: 14px; }
+    tbody tr { transition: background 0.15s; }
+    tbody tr:hover { background: #f0f7ff; }
+    tbody tr:nth-child(even) { background: #fafafa; }
+    tbody tr:nth-child(even):hover { background: #f0f7ff; }
+    .id-cell { font-family: ui-monospace, monospace; font-size: 12px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
     .loading { color: #999; padding: 24px; text-align: center; }
     .error { color: #c00; padding: 24px; }
+    .footer { margin-top: 12px; color: #666; font-size: 13px; }
   </style>
 </head>
 <body>
@@ -26,10 +37,17 @@
   <div class="cards" id="overview">
     <div class="card"><div class="label">会话数</div><div class="value" id="totalSessions">-</div></div>
     <div class="card"><div class="label">总 Token</div><div class="value" id="totalTokens">-</div></div>
-    <div class="card"><div class="label">总成本</div><div class="value" id="totalCost">-</div></div>
   </div>
 
-  <h2>会话列表</h2>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <h2 style="margin:0;">会话列表</h2>
+    <button id="refreshBtn" style="padding:6px 14px;cursor:pointer;border:1px solid #ccc;border-radius:6px;background:#fff;font-size:13px;">刷新</button>
+  </div>
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-source="">全部</button>
+    <button class="tab" data-source="opencode">OpenCode</button>
+    <!-- 后续扩展: <button class="tab" data-source="cursor">Cursor</button> -->
+  </div>
   <div id="sessions">
     <div class="loading">加载中...</div>
   </div>
@@ -39,6 +57,7 @@
     const from = params.get('from') || '';
     const to = params.get('to') || '';
     const limit = params.get('limit') || '50';
+    let currentSource = '';
 
     async function loadOverview() {
       const q = new URLSearchParams();
@@ -49,7 +68,6 @@
       const data = await res.json();
       document.getElementById('totalSessions').textContent = data.totalSessions.toLocaleString();
       document.getElementById('totalTokens').textContent = data.totalTokens.toLocaleString();
-      document.getElementById('totalCost').textContent = data.totalCost.toFixed(4);
     }
 
     async function loadSessions() {
@@ -57,33 +75,51 @@
       if (from) q.set('from', from);
       if (to) q.set('to', to);
       q.set('limit', limit);
+      if (currentSource) q.set('source', currentSource);
       const res = await fetch('/api/sessions?' + q);
       if (!res.ok) throw new Error('sessions failed');
       const { sessions, total } = await res.json();
 
       const html = `
-        <table>
-          <thead>
-            <tr><th>ID</th><th>Source</th><th>Model</th><th>时间</th><th>Token</th><th>Cost</th></tr>
-          </thead>
-          <tbody>
-            ${sessions.map(s => {
-              const tokens = (s.contextUsage?.inputTokens ?? 0) + (s.contextUsage?.outputTokens ?? 0);
-              const cost = s.cost?.amount ?? 0;
-              return `<tr>
-                <td><code>${escapeHtml(s.id)}</code></td>
-                <td>${escapeHtml(s.source)}</td>
-                <td>${escapeHtml(s.model || '-')}</td>
-                <td>${escapeHtml(s.startedAt)}</td>
-                <td>${tokens.toLocaleString()}</td>
-                <td>${cost.toFixed(4)}</td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-        <p style="margin-top:12px;color:#666;">共 ${total} 条</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th style="width:140px">ID</th><th style="width:90px">来源</th><th style="width:140px">模型</th><th style="width:140px">时间</th><th style="width:90px">Token</th></tr>
+            </thead>
+            <tbody>
+              ${sessions.length === 0 ? '<tr><td colspan="5" class="loading">暂无数据</td></tr>' : sessions.map(s => {
+                const tokens = (s.contextUsage?.inputTokens ?? 0) + (s.contextUsage?.outputTokens ?? 0);
+                return `<tr onclick="location.href='session.html?id=${encodeURIComponent(s.id)}'" style="cursor:pointer">
+                  <td class="id-cell" title="${escapeHtml(s.id)}">${escapeHtml(s.id)}</td>
+                  <td>${escapeHtml(s.source)}</td>
+                  <td>${escapeHtml(s.model || '-')}</td>
+                  <td>${escapeHtml(formatTime(s.startedAt))}</td>
+                  <td>${tokens.toLocaleString()}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+        <p class="footer">共 ${total} 条</p>
       `;
       document.getElementById('sessions').innerHTML = html;
+    }
+
+    document.getElementById('tabs').addEventListener('click', (e) => {
+      const tab = e.target.closest('.tab');
+      if (!tab) return;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      currentSource = tab.dataset.source || '';
+      loadSessions();
+    });
+
+    function formatTime(iso) {
+      if (!iso) return '-';
+      try {
+        const d = new Date(iso);
+        return d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+      } catch { return iso; }
     }
 
     function escapeHtml(s) {
@@ -93,13 +129,21 @@
       return div.innerHTML;
     }
 
-    (async () => {
+    async function refresh() {
       try {
+        document.getElementById('refreshBtn').disabled = true;
         await Promise.all([loadOverview(), loadSessions()]);
       } catch (e) {
         document.getElementById('sessions').innerHTML = '<div class="error">加载失败: ' + escapeHtml(e.message) + '</div>';
+      } finally {
+        document.getElementById('refreshBtn').disabled = false;
       }
-    })();
+    }
+
+    document.getElementById('refreshBtn').onclick = refresh;
+
+    refresh();
+    setInterval(refresh, 30_000);
   </script>
 </body>
 </html>

@@ -12,6 +12,7 @@ import type {
 import type { SessionFilter, SessionStore } from './types.js';
 
 interface RawMeta {
+  prompt?: string;
   tools?: ToolUsage[];
   agents?: string[];
   skills?: string[];
@@ -100,6 +101,7 @@ export class SqliteStore implements SessionStore {
 
   private sessionToRow(session: Session): Record<string, unknown> {
     const rawMeta: RawMeta = {};
+    if (session.prompt) rawMeta.prompt = session.prompt;
     if (session.tools?.length) rawMeta.tools = session.tools;
     if (session.agents?.length) rawMeta.agents = session.agents;
     if (session.skills?.length) rawMeta.skills = session.skills;
@@ -166,6 +168,7 @@ export class SqliteStore implements SessionStore {
         projectPath: String(row.project_path),
       }),
       ...(row.model != null && { model: String(row.model) }),
+      ...(rawMeta?.prompt && { prompt: rawMeta.prompt }),
       ...(contextUsage && { contextUsage }),
       ...(rawMeta?.tools?.length && { tools: rawMeta.tools }),
       ...(rawMeta?.agents?.length && { agents: rawMeta.agents }),

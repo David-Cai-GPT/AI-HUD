@@ -1,7 +1,54 @@
+import { homedir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import type { Session, SessionStore } from '@ai-hud/core';
 import type { ContextUsage, CostInfo, ToolUsage } from '@ai-hud/core';
 import type { SessionAdapter } from '@ai-hud/core';
+import { BUILTIN_TOOLS, inferMcpName } from './constants.js';
+import { getEnabledMcpServers, loadMergedConfig } from './opencode-config.js';
+import { scanSkills } from './skills-scanner.js';
+
+interface OpenCodeSessionListItem {
+  id: string;
+  title?: string;
+  created?: number;
+  updated?: number;
+  projectId?: string;
+  directory?: string;
+}
+
+interface OpenCodeExportData {
+  info?: {
+    id?: string;
+    directory?: string;
+    time?: { created?: number; updated?: number };
+  };
+  messages?: Array<{
+    info?: {
+      role?: string;
+      modelID?: string;
+      providerID?: string;
+      cost?: number;
+      tokens?: {
+        input?: number;
+        output?: number;
+        reasoning?: number;
+        cache?: { read?: number; write?: number };
+      };
+    };
+    parts?: Array<{
+      type?: string;
+      text?: string;
+      tool?: string;
+      reason?: string;
+      cost?: number;
+      tokens?: {
+        input?: number;
+        output?: number;
+        cache?: { read?: number; write?: number };
+      };
+    }>;
+  }>;
+}
 
 interface StreamStepStart {
   type: 'step_start';
@@ -34,8 +81,14 @@ interface StreamStepFinish {
 
 type StreamEvent = StreamStepStart | StreamToolUse | StreamStepFinish;
 
-function timestampToIso(ms: number): string {
-  return new Date(ms).toISOString();
+function normalizeTimestamp(ts: number): number {
+  if (ts <= 0) return ts;
+  if (ts < 1e12) return ts * 1000;
+  return ts;
+}
+
+function timestampToIso(ts: number): string {
+  return new Date(normalizeTimestamp(ts)).toISOString();
 }
 
 function parseToolUsage(tools: ToolUsage[], toolName: string): ToolUsage[] {
@@ -53,14 +106,20 @@ export async function runWithCapture(
   cwd?: string
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn('opencode', ['run', '--format', 'stream-json', task], {
+    const workDir = cwd ?? process.cwd();
+    const config = loadMergedConfig(workDir);
+    const configMcp = getEnabledMcpServers(config);
+    const configSkills = scanSkills(workDir);
+
+    const proc = spawn('opencode', ['run', '--format', 'json', task], {
       stdio: ['inherit', 'pipe', 'inherit'],
-      cwd: cwd ?? process.cwd(),
+      cwd: workDir,
       windowsHide: true,
     });
 
     let session: Partial<Session> | null = null;
     let tools: ToolUsage[] = [];
+    let mcpUsed = new Set<string>();
     let sessionToAppend: Session | null = null;
 
     const stdout = proc.stdout;
@@ -89,13 +148,21 @@ export async function runWithCapture(
                 id: ev.sessionID,
                 source: 'opencode',
                 startedAt: timestampToIso(ev.timestamp),
+                ...(configSkills.length > 0 && { skills: [...configSkills] }),
+                ...(configMcp.length > 0 && { mcp: [...configMcp] }),
               };
               tools = [];
+              mcpUsed = new Set();
               break;
             }
             case 'tool_use': {
               const toolName = ev.part?.tool;
-              if (toolName) tools = parseToolUsage(tools, toolName);
+              if (toolName) {
+                tools = parseToolUsage(tools, toolName);
+                if (!BUILTIN_TOOLS.has(toolName)) {
+                  mcpUsed.add(inferMcpName(toolName));
+                }
+              }
               break;
             }
             case 'step_finish': {
@@ -120,14 +187,18 @@ export async function runWithCapture(
                     ? { amount: ev.part.cost, currency: 'USD' }
                     : undefined;
 
+                const mcpList = [...new Set([...configMcp, ...mcpUsed])];
                 sessionToAppend = {
                   id: session.id!,
                   source: session.source!,
                   startedAt: session.startedAt!,
                   endedAt: timestampToIso(ev.timestamp),
+                  prompt: task,
                   ...(contextUsage && { contextUsage }),
                   ...(tools.length > 0 && { tools }),
                   ...(cost && { cost }),
+                  ...(session.skills?.length && { skills: session.skills }),
+                  ...(mcpList.length > 0 && { mcp: mcpList }),
                 };
               }
               break;
@@ -169,7 +240,141 @@ export class OpenCodeAdapter implements SessionAdapter {
     return result.status === 0;
   }
 
-  async collect(): Promise<Session[]> {
-    return [];
+  async collect(store: SessionStore): Promise<Session[]> {
+    const dirsToTry = [homedir(), process.cwd()];
+    const seenIds = new Set<string>();
+    const items: OpenCodeSessionListItem[] = [];
+
+    for (const cwd of dirsToTry) {
+      const listResult = spawnSync(
+        'opencode',
+        ['session', 'list', '--format', 'json', '--max-count', '100'],
+        { encoding: 'utf8', windowsHide: true, cwd }
+      );
+      if (listResult.status !== 0 || !listResult.stdout?.trim()) continue;
+      try {
+        const parsed = JSON.parse(listResult.stdout) as OpenCodeSessionListItem[];
+        if (Array.isArray(parsed)) {
+          for (const it of parsed) {
+            if (it.id && !seenIds.has(it.id)) {
+              seenIds.add(it.id);
+              items.push(it);
+            }
+          }
+        }
+      } catch {
+        // skip
+      }
+    }
+
+    if (items.length === 0) return [];
+
+    const sessions: Session[] = [];
+    for (const item of items) {
+      if (!item.id) continue;
+      const existing = await store.getById(item.id);
+      if (existing != null) continue;
+
+      const exportResult = spawnSync('opencode', ['export', item.id], {
+        encoding: 'utf8',
+        windowsHide: true,
+      });
+      if (exportResult.status !== 0 || !exportResult.stdout?.trim()) continue;
+
+      let data: OpenCodeExportData;
+      try {
+        data = JSON.parse(exportResult.stdout) as OpenCodeExportData;
+      } catch {
+        continue;
+      }
+
+      const info = data.info;
+      if (!info?.id) continue;
+
+      const workDir = info.directory ?? item.directory ?? process.cwd();
+      const config = loadMergedConfig(workDir);
+      const configMcp = getEnabledMcpServers(config);
+      const configSkills = scanSkills(workDir);
+
+      const created = normalizeTimestamp(
+        info.time?.created ?? item.created ?? 0
+      );
+      const updated = normalizeTimestamp(
+        info.time?.updated ?? item.updated ?? created
+      );
+
+      let totalInput = 0;
+      let totalOutput = 0;
+      let totalCacheRead = 0;
+      let totalCacheWrite = 0;
+      let totalCost = 0;
+      const toolsMap = new Map<string, number>();
+      const mcpUsed = new Set<string>(configMcp);
+      let lastModel: string | undefined;
+      let prompt: string | undefined;
+
+      for (const msg of data.messages ?? []) {
+        const mi = msg.info;
+        if (mi?.role === 'user' && !prompt) {
+          for (const part of msg.parts ?? []) {
+            if (part.type === 'text' && part.text) {
+              prompt = part.text.trim();
+              if (prompt.length > 500) prompt = prompt.slice(0, 500) + '...';
+              break;
+            }
+          }
+        }
+        if (mi?.tokens) {
+          totalInput += mi.tokens.input ?? 0;
+          totalOutput += mi.tokens.output ?? 0;
+          const c = mi.tokens.cache;
+          if (c) {
+            totalCacheRead += c.read ?? 0;
+            totalCacheWrite += c.write ?? 0;
+          }
+        }
+        if (typeof mi?.cost === 'number') totalCost += mi.cost;
+        if (mi?.modelID) lastModel = mi.modelID;
+
+        for (const part of msg.parts ?? []) {
+          if (part.type === 'tool' && part.tool) {
+            toolsMap.set(part.tool, (toolsMap.get(part.tool) ?? 0) + 1);
+            if (!BUILTIN_TOOLS.has(part.tool)) {
+              mcpUsed.add(inferMcpName(part.tool));
+            }
+          }
+        }
+      }
+
+      const contextUsage: ContextUsage | undefined =
+        totalInput > 0 || totalOutput > 0
+          ? {
+              inputTokens: totalInput,
+              outputTokens: totalOutput,
+              ...(totalCacheRead > 0 && { cacheRead: totalCacheRead }),
+              ...(totalCacheWrite > 0 && { cacheCreate: totalCacheWrite }),
+            }
+          : undefined;
+
+      const tools: ToolUsage[] = Array.from(toolsMap.entries()).map(
+        ([name, count]) => ({ name, count })
+      );
+
+      sessions.push({
+        id: info.id,
+        source: 'opencode',
+        startedAt: new Date(created).toISOString(),
+        endedAt: new Date(updated).toISOString(),
+        ...(info.directory && { projectPath: info.directory }),
+        ...(lastModel && { model: lastModel }),
+        ...(prompt && { prompt }),
+        ...(contextUsage && { contextUsage }),
+        ...(tools.length > 0 && { tools }),
+        ...(configSkills.length > 0 && { skills: configSkills }),
+        ...(mcpUsed.size > 0 && { mcp: [...mcpUsed] }),
+        ...(totalCost > 0 && { cost: { amount: totalCost, currency: 'USD' } }),
+      });
+    }
+    return sessions;
   }
 }

@@ -1,4 +1,5 @@
 import type { Session } from '../model/index.js';
+import type { SessionStore } from '../store/types.js';
 
 /**
  * Adapter interface for collecting sessions from external sources.
@@ -6,6 +7,6 @@ import type { Session } from '../model/index.js';
  */
 export interface SessionAdapter {
   readonly name: string;
-  collect(): Promise<Session[]>;
+  collect(store: SessionStore): Promise<Session[]>;
   isAvailable(): Promise<boolean>;
 }

@@ -50,6 +50,13 @@ export async function createServer(store: SqliteStore) {
     prefix: '/',
   });
 
+  app.get('/api/sessions/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const session = await store.getById(id);
+    if (!session) return reply.status(404).send({ error: 'Session not found' });
+    return reply.send(session);
+  });
+
   app.get('/api/sessions', async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
     const filter: SessionFilter = {};
@@ -87,9 +94,12 @@ export async function createServer(store: SqliteStore) {
 
 export const DEFAULT_PORT = 3847;
 
-export async function startServer(port: number = DEFAULT_PORT): Promise<void> {
-  const store = new SqliteStore();
-  const app = await createServer(store);
+export async function startServer(
+  port: number = DEFAULT_PORT,
+  store?: SqliteStore
+): Promise<{ app: Awaited<ReturnType<typeof createServer>>; store: SqliteStore }> {
+  const s = store ?? new SqliteStore();
+  const app = await createServer(s);
   try {
     await app.listen({ port, host: '0.0.0.0' });
     console.log(`AI-HUD Web server listening on http://localhost:${port}`);
@@ -103,6 +113,7 @@ export async function startServer(port: number = DEFAULT_PORT): Promise<void> {
     }
     process.exit(1);
   }
+  return { app, store: s };
 }
 
 async function main() {

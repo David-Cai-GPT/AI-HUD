@@ -30,6 +30,7 @@ export interface Session {
   endedAt?: string;
   projectPath?: string;
   model?: string;
+  prompt?: string;
   contextUsage?: ContextUsage;
   tools?: ToolUsage[];
   agents?: string[];

@@ -35,12 +35,20 @@ program
       portOpt = process.argv[portIdx + 1];
     }
     const port = Math.max(1, parseInt(String(portOpt), 10) || DEFAULT_PORT);
-    await startServer(port);
-
     const store = new SqliteStore();
+    await startServer(port, store);
+
     const collector = new Collector(store, [new OpenCodeAdapter()]);
     await collector.run();
     setInterval(() => collector.run(), 60_000);
+    console.log('后台采集已启动，每 60 秒执行一次');
+
+    const shutdown = () => {
+      store.close();
+      process.exit(0);
+    };
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
   });
 
 program
@@ -61,6 +69,28 @@ program
       store.close();
     }
   });
+
+program
+  .command('session')
+  .description('Session commands')
+  .addCommand(
+    new Command('show')
+      .description('Show session detail by ID')
+      .argument('<id>', 'Session ID (e.g. ses_xxx)')
+      .action(async (id: string) => {
+        const store = new SqliteStore();
+        try {
+          const session = await store.getById(id);
+          if (!session) {
+            console.error('会话不存在:', id);
+            process.exit(1);
+          }
+          printSessionDetail(session);
+        } finally {
+          store.close();
+        }
+      })
+  );
 
 program
   .command('opencode')
@@ -112,6 +142,35 @@ function printSessionsTable(sessions: Session[]): void {
         pad(String(token), W.token) +
         pad(cost, W.cost)
     );
+  }
+}
+
+function printSessionDetail(s: Session): void {
+  console.log('ID:', s.id);
+  console.log('来源:', s.source);
+  console.log('模型:', s.model ?? '-');
+  console.log('开始:', s.startedAt);
+  console.log('结束:', s.endedAt ?? '-');
+  const tokens =
+    (s.contextUsage?.inputTokens ?? 0) + (s.contextUsage?.outputTokens ?? 0);
+  console.log('Token:', tokens.toLocaleString());
+  console.log(
+    '成本:',
+    s.cost ? `${s.cost.amount} ${s.cost.currency}` : '-'
+  );
+  if (s.projectPath) console.log('项目路径:', s.projectPath);
+  if (s.prompt) {
+    console.log('\n用户输入 (Prompt):');
+    console.log(s.prompt);
+  }
+  if (s.tools?.length) {
+    console.log('\n工具调用:', s.tools.map((t) => `${t.name}×${t.count}`).join(', '));
+  }
+  if (s.skills?.length) {
+    console.log('Skills:', s.skills.join(', '));
+  }
+  if (s.mcp?.length) {
+    console.log('MCP:', s.mcp.join(', '));
   }
 }
 

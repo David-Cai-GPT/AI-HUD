@@ -15,7 +15,7 @@ export class Collector {
         const available = await adapter.isAvailable();
         if (!available) continue;
 
-        const sessions = await adapter.collect();
+        const sessions = await adapter.collect(this.store);
         for (const session of sessions) {
           await this.store.append(session);
         }
