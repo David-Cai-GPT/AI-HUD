@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI-HUD Dashboard</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 24px; background: #f5f5f5; }
+    h1 { margin: 0 0 24px; color: #333; }
+    .cards { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+    .card { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); min-width: 160px; }
+    .card .label { font-size: 12px; color: #666; text-transform: uppercase; margin-bottom: 4px; }
+    .card .value { font-size: 24px; font-weight: 600; color: #111; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    th, td { padding: 12px 16px; text-align: left; }
+    th { background: #f8f8f8; font-size: 12px; color: #666; text-transform: uppercase; }
+    tr:nth-child(even) { background: #fafafa; }
+    .loading { color: #999; padding: 24px; text-align: center; }
+    .error { color: #c00; padding: 24px; }
+  </style>
+</head>
+<body>
+  <h1>AI-HUD Dashboard</h1>
+
+  <div class="cards" id="overview">
+    <div class="card"><div class="label">会话数</div><div class="value" id="totalSessions">-</div></div>
+    <div class="card"><div class="label">总 Token</div><div class="value" id="totalTokens">-</div></div>
+    <div class="card"><div class="label">总成本</div><div class="value" id="totalCost">-</div></div>
+  </div>
+
+  <h2>会话列表</h2>
+  <div id="sessions">
+    <div class="loading">加载中...</div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const from = params.get('from') || '';
+    const to = params.get('to') || '';
+    const limit = params.get('limit') || '50';
+
+    async function loadOverview() {
+      const q = new URLSearchParams();
+      if (from) q.set('from', from);
+      if (to) q.set('to', to);
+      const res = await fetch('/api/stats/overview?' + q);
+      if (!res.ok) throw new Error('overview failed');
+      const data = await res.json();
+      document.getElementById('totalSessions').textContent = data.totalSessions.toLocaleString();
+      document.getElementById('totalTokens').textContent = data.totalTokens.toLocaleString();
+      document.getElementById('totalCost').textContent = data.totalCost.toFixed(4);
+    }
+
+    async function loadSessions() {
+      const q = new URLSearchParams();
+      if (from) q.set('from', from);
+      if (to) q.set('to', to);
+      q.set('limit', limit);
+      const res = await fetch('/api/sessions?' + q);
+      if (!res.ok) throw new Error('sessions failed');
+      const { sessions, total } = await res.json();
+
+      const html = `
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Source</th><th>Model</th><th>时间</th><th>Token</th><th>Cost</th></tr>
+          </thead>
+          <tbody>
+            ${sessions.map(s => {
+              const tokens = (s.contextUsage?.inputTokens ?? 0) + (s.contextUsage?.outputTokens ?? 0);
+              const cost = s.cost?.amount ?? 0;
+              return `<tr>
+                <td><code>${escapeHtml(s.id)}</code></td>
+                <td>${escapeHtml(s.source)}</td>
+                <td>${escapeHtml(s.model || '-')}</td>
+                <td>${escapeHtml(s.startedAt)}</td>
+                <td>${tokens.toLocaleString()}</td>
+                <td>${cost.toFixed(4)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        <p style="margin-top:12px;color:#666;">共 ${total} 条</p>
+      `;
+      document.getElementById('sessions').innerHTML = html;
+    }
+
+    function escapeHtml(s) {
+      if (s == null) return '';
+      const div = document.createElement('div');
+      div.textContent = String(s);
+      return div.innerHTML;
+    }
+
+    (async () => {
+      try {
+        await Promise.all([loadOverview(), loadSessions()]);
+      } catch (e) {
+        document.getElementById('sessions').innerHTML = '<div class="error">加载失败: ' + escapeHtml(e.message) + '</div>';
+      }
+    })();
+  </script>
+</body>
+</html>
