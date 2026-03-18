@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import type { Session, SessionStore } from '@ai-hud/core';
 import type { ContextUsage, CostInfo, ToolUsage } from '@ai-hud/core';
-import type { SessionAdapter } from '../types.js';
+import type { SessionAdapter } from '@ai-hud/core';
 
 interface StreamStepStart {
   type: 'step_start';
