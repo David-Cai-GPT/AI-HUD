@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { Collector, SqliteStore, type Session } from '@ai-hud/core';
 import { OpenCodeAdapter, runWithCapture } from '@ai-hud/adapters';
+import { startServer, DEFAULT_PORT } from '@ai-hud/web';
 
 const program = new Command();
 
@@ -21,6 +22,20 @@ program
     } finally {
       store.close();
     }
+  });
+
+program
+  .command('serve')
+  .description('Start Web server with background collection')
+  .option('-p, --port <port>', 'Port to listen on', String(DEFAULT_PORT))
+  .action(async (opts: { port: string }) => {
+    const port = Math.max(1, parseInt(opts.port, 10) || DEFAULT_PORT);
+    await startServer(port);
+
+    const store = new SqliteStore();
+    const collector = new Collector(store, [new OpenCodeAdapter()]);
+    await collector.run();
+    setInterval(() => collector.run(), 60_000);
   });
 
 program

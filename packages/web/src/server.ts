@@ -6,7 +6,6 @@ import { SqliteStore } from '@ai-hud/core';
 import type { Session, SessionFilter } from '@ai-hud/core';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_PORT = 3847;
 
 export interface OverviewStats {
   totalSessions: number;
@@ -86,11 +85,11 @@ export async function createServer(store: SqliteStore) {
   return app;
 }
 
-async function main() {
+export const DEFAULT_PORT = 3847;
+
+export async function startServer(port: number = DEFAULT_PORT): Promise<void> {
   const store = new SqliteStore();
   const app = await createServer(store);
-  const port = parseInt(process.env.PORT ?? '', 10) || DEFAULT_PORT;
-
   try {
     await app.listen({ port, host: '0.0.0.0' });
     console.log(`AI-HUD Web server listening on http://localhost:${port}`);
@@ -100,4 +99,11 @@ async function main() {
   }
 }
 
-main();
+async function main() {
+  const port = parseInt(process.env.PORT ?? '', 10) || DEFAULT_PORT;
+  await startServer(port);
+}
+
+if (process.argv[1]?.endsWith('server.js') || process.argv[1]?.endsWith('server.ts')) {
+  main();
+}

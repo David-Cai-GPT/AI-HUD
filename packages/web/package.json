@@ -2,6 +2,10 @@
   "name": "@ai-hud/web",
   "version": "0.0.1",
   "type": "module",
+  "main": "./dist/server.js",
+  "exports": {
+    ".": "./dist/server.js"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/server.ts"
