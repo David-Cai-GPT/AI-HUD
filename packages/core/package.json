@@ -2,7 +2,7 @@
   "name": "@ai-hud/core",
   "version": "0.0.1",
   "scripts": {
-    "build": "echo 'no-op'",
+    "build": "tsc",
     "dev": "echo 'no-op'"
   },
   "dependencies": {
