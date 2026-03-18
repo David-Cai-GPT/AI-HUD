@@ -1,0 +1,7 @@
+{
+  "name": "@ai-hud/adapters",
+  "version": "0.0.1",
+  "dependencies": {
+    "@ai-hud/core": "workspace:*"
+  }
+}

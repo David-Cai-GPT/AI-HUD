@@ -1,0 +1,9 @@
+{
+  "name": "@ai-hud/web",
+  "version": "0.0.1",
+  "dependencies": {
+    "@ai-hud/core": "workspace:*",
+    "fastify": "^5.0.0",
+    "@fastify/static": "^8.0.0"
+  }
+}

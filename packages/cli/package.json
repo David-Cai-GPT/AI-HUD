@@ -1,0 +1,10 @@
+{
+  "name": "ai-hud",
+  "version": "0.0.1",
+  "bin": {
+    "ai-hud": "./dist/index.js"
+  },
+  "dependencies": {
+    "@ai-hud/core": "workspace:*"
+  }
+}
