@@ -1,6 +1,10 @@
 {
   "name": "@ai-hud/adapters",
   "version": "0.0.1",
+  "scripts": {
+    "build": "echo 'no-op'",
+    "dev": "echo 'no-op'"
+  },
   "dependencies": {
     "@ai-hud/core": "workspace:*"
   }

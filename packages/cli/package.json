@@ -4,6 +4,10 @@
   "bin": {
     "ai-hud": "./dist/index.js"
   },
+  "scripts": {
+    "build": "echo 'no-op'",
+    "dev": "echo 'no-op'"
+  },
   "dependencies": {
     "@ai-hud/core": "workspace:*"
   }
