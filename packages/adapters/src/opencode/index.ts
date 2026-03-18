@@ -1,4 +1,6 @@
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import type { Session, SessionStore } from '@ai-hud/core';
 import type { ContextUsage, CostInfo, ToolUsage } from '@ai-hud/core';
@@ -229,6 +231,29 @@ export async function runWithCapture(
   });
 }
 
+function getOpenCodeProjectDirs(): string[] {
+  const dbPath = join(homedir(), '.local', 'share', 'opencode', 'opencode.db');
+  if (!existsSync(dbPath)) {
+    return [homedir(), process.cwd()];
+  }
+  const result = spawnSync('sqlite3', [dbPath, 'SELECT worktree FROM project'], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (result.status !== 0 || !result.stdout?.trim()) {
+    return [homedir(), process.cwd()];
+  }
+  const worktrees = result.stdout.trim().split('\n').filter(Boolean);
+  const dirs = new Set<string>();
+  dirs.add(homedir());
+  dirs.add(process.cwd());
+  for (const w of worktrees) {
+    const d = w === '/' ? homedir() : w;
+    if (d && existsSync(d)) dirs.add(d);
+  }
+  return [...dirs];
+}
+
 export class OpenCodeAdapter implements SessionAdapter {
   readonly name = 'opencode';
 
@@ -241,7 +266,7 @@ export class OpenCodeAdapter implements SessionAdapter {
   }
 
   async collect(store: SessionStore): Promise<Session[]> {
-    const dirsToTry = [homedir(), process.cwd()];
+    const dirsToTry = getOpenCodeProjectDirs();
     const seenIds = new Set<string>();
     const items: OpenCodeSessionListItem[] = [];
 
