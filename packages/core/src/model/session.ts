@@ -3,6 +3,9 @@ export interface ContextUsage {
   outputTokens: number;
   cacheRead?: number;
   cacheCreate?: number;
+  systemTokens?: number;
+  userTokens?: number;
+  assistantTokens?: number;
 }
 
 export interface ToolUsage {

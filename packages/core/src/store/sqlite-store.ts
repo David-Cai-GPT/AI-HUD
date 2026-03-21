@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   output_tokens INTEGER,
   cache_read INTEGER,
   cache_create INTEGER,
+  system_tokens INTEGER,
+  user_tokens INTEGER,
+  assistant_tokens INTEGER,
   cost_amount INTEGER,
   cost_currency TEXT,
   raw_meta TEXT,
@@ -96,6 +99,16 @@ export class SqliteStore implements SessionStore {
       db = new SQL.Database();
     }
     db.run(CREATE_TABLE_SQL);
+    // 兼容旧库：若缺少列则添加
+    const cols = db.exec('PRAGMA table_info(sessions)');
+    const colNames = (cols[0]?.values ?? []).map(
+      (r: unknown) => String((r as unknown[])?.[1])
+    );
+    for (const col of ['system_tokens', 'user_tokens', 'assistant_tokens']) {
+      if (!colNames.includes(col)) {
+        db.run(`ALTER TABLE sessions ADD COLUMN ${col} INTEGER`);
+      }
+    }
     this.db = db;
   }
 
@@ -122,6 +135,9 @@ export class SqliteStore implements SessionStore {
       output_tokens: cu?.outputTokens ?? null,
       cache_read: cu?.cacheRead ?? null,
       cache_create: cu?.cacheCreate ?? null,
+      system_tokens: cu?.systemTokens ?? null,
+      user_tokens: cu?.userTokens ?? null,
+      assistant_tokens: cu?.assistantTokens ?? null,
       cost_amount: cost?.amount ?? null,
       cost_currency: cost?.currency ?? null,
       raw_meta:
@@ -147,6 +163,15 @@ export class SqliteStore implements SessionStore {
             ...(row.cache_read != null && { cacheRead: Number(row.cache_read) }),
             ...(row.cache_create != null && {
               cacheCreate: Number(row.cache_create),
+            }),
+            ...(row.system_tokens != null && {
+              systemTokens: Number(row.system_tokens),
+            }),
+            ...(row.user_tokens != null && {
+              userTokens: Number(row.user_tokens),
+            }),
+            ...(row.assistant_tokens != null && {
+              assistantTokens: Number(row.assistant_tokens),
             }),
           }
         : undefined;
@@ -187,10 +212,12 @@ export class SqliteStore implements SessionStore {
       `INSERT OR REPLACE INTO sessions (
         id, source, started_at, ended_at, project_path, model,
         input_tokens, output_tokens, cache_read, cache_create,
+        system_tokens, user_tokens, assistant_tokens,
         cost_amount, cost_currency, raw_meta
       ) VALUES (
         :id, :source, :started_at, :ended_at, :project_path, :model,
         :input_tokens, :output_tokens, :cache_read, :cache_create,
+        :system_tokens, :user_tokens, :assistant_tokens,
         :cost_amount, :cost_currency, :raw_meta
       )`,
       {
@@ -204,6 +231,9 @@ export class SqliteStore implements SessionStore {
         ':output_tokens': row.output_tokens,
         ':cache_read': row.cache_read,
         ':cache_create': row.cache_create,
+        ':system_tokens': row.system_tokens,
+        ':user_tokens': row.user_tokens,
+        ':assistant_tokens': row.assistant_tokens,
         ':cost_amount': row.cost_amount,
         ':cost_currency': row.cost_currency,
         ':raw_meta': row.raw_meta,
