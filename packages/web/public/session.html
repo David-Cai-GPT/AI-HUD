@@ -52,6 +52,23 @@
                 <div class="meta-item"><span class="label">Token</span><br><span class="val">${tokens.toLocaleString()}</span></div>
                 ${s.projectPath ? `<div class="meta-item" style="grid-column:1/-1"><span class="label">项目路径</span><br><span class="val">${escapeHtml(s.projectPath)}</span></div>` : ''}
               </div>
+              ${(s.contextUsage?.systemTokens ?? 0) + (s.contextUsage?.userTokens ?? 0) + (s.contextUsage?.assistantTokens ?? 0) > 0 ? `
+              <div class="meta" style="margin-top:12px; padding-top:12px; border-top:1px solid #eee;">
+                <div class="meta-item"><span class="label">System</span><br><span class="val">${(s.contextUsage?.systemTokens ?? 0).toLocaleString()}</span></div>
+                <div class="meta-item"><span class="label">User</span><br><span class="val">${(s.contextUsage?.userTokens ?? 0).toLocaleString()}</span></div>
+                <div class="meta-item"><span class="label">Assistant</span><br><span class="val">${(s.contextUsage?.assistantTokens ?? 0).toLocaleString()}</span></div>
+                <div class="meta-item"><span class="label">Output</span><br><span class="val">${(s.contextUsage?.outputTokens ?? 0).toLocaleString()}</span></div>
+                ${(s.contextUsage?.cacheRead ?? 0) > 0 ? `<div class="meta-item"><span class="label">Cache Read</span><br><span class="val">${(s.contextUsage.cacheRead ?? 0).toLocaleString()}</span></div>` : ''}
+                ${(s.contextUsage?.cacheCreate ?? 0) > 0 ? `<div class="meta-item"><span class="label">Cache Create</span><br><span class="val">${(s.contextUsage.cacheCreate ?? 0).toLocaleString()}</span></div>` : ''}
+              </div>
+              ` : (s.contextUsage?.cacheRead ?? 0) + (s.contextUsage?.cacheCreate ?? 0) > 0 ? `
+              <div class="meta" style="margin-top:12px; padding-top:12px; border-top:1px solid #eee;">
+                <div class="meta-item"><span class="label">Input</span><br><span class="val">${(s.contextUsage?.inputTokens ?? 0).toLocaleString()}</span></div>
+                <div class="meta-item"><span class="label">Output</span><br><span class="val">${(s.contextUsage?.outputTokens ?? 0).toLocaleString()}</span></div>
+                <div class="meta-item"><span class="label">Cache Read</span><br><span class="val">${(s.contextUsage?.cacheRead ?? 0).toLocaleString()}</span></div>
+                <div class="meta-item"><span class="label">Cache Create</span><br><span class="val">${(s.contextUsage?.cacheCreate ?? 0).toLocaleString()}</span></div>
+              </div>
+              ` : ''}
             </div>
             ${s.prompt ? `
             <div class="card">
