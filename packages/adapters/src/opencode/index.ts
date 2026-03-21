@@ -332,6 +332,9 @@ export class OpenCodeAdapter implements SessionAdapter {
       let totalOutput = 0;
       let totalCacheRead = 0;
       let totalCacheWrite = 0;
+      let totalSystem = 0;
+      let totalUser = 0;
+      let totalAssistant = 0;
       let totalCost = 0;
       const toolsMap = new Map<string, number>();
       const mcpUsed = new Set<string>(configMcp);
@@ -350,8 +353,14 @@ export class OpenCodeAdapter implements SessionAdapter {
           }
         }
         if (mi?.tokens) {
-          totalInput += mi.tokens.input ?? 0;
-          totalOutput += mi.tokens.output ?? 0;
+          const role = mi.role ?? '';
+          const ti = mi.tokens.input ?? 0;
+          const to = mi.tokens.output ?? 0;
+          if (role === 'system') totalSystem += ti + to;
+          else if (role === 'user') totalUser += ti + to;
+          else if (role === 'assistant') totalAssistant += ti + to;
+          totalInput += ti;
+          totalOutput += to;
           const c = mi.tokens.cache;
           if (c) {
             totalCacheRead += c.read ?? 0;
@@ -378,6 +387,9 @@ export class OpenCodeAdapter implements SessionAdapter {
               outputTokens: totalOutput,
               ...(totalCacheRead > 0 && { cacheRead: totalCacheRead }),
               ...(totalCacheWrite > 0 && { cacheCreate: totalCacheWrite }),
+              ...(totalSystem > 0 && { systemTokens: totalSystem }),
+              ...(totalUser > 0 && { userTokens: totalUser }),
+              ...(totalAssistant > 0 && { assistantTokens: totalAssistant }),
             }
           : undefined;
 
