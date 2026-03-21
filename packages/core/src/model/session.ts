@@ -35,6 +35,8 @@ export interface Session {
   model?: string;
   prompt?: string;
   contextUsage?: ContextUsage;
+  /** Cursor 专有：上下文占用百分比（无 token 时用此近似展示） */
+  contextUsagePercent?: number;
   tools?: ToolUsage[];
   agents?: string[];
   skills?: string[];

@@ -40,6 +40,7 @@
         .then(r => r.ok ? r.json() : Promise.reject(new Error('Not found')))
         .then(s => {
           const tokens = (s.contextUsage?.inputTokens ?? 0) + (s.contextUsage?.outputTokens ?? 0);
+          const tokenDisplay = tokens > 0 ? tokens.toLocaleString() : '暂无';
           const html = `
             <h1>${escapeHtml(s.id)}</h1>
             <div class="card">
@@ -49,7 +50,8 @@
                 <div class="meta-item"><span class="label">模型</span><br><span class="val">${escapeHtml(s.model || '-')}</span></div>
                 <div class="meta-item"><span class="label">开始</span><br><span class="val">${escapeHtml(formatTime(s.startedAt))}</span></div>
                 <div class="meta-item"><span class="label">结束</span><br><span class="val">${escapeHtml(formatTime(s.endedAt) || '-')}</span></div>
-                <div class="meta-item"><span class="label">Token</span><br><span class="val">${tokens.toLocaleString()}</span></div>
+                <div class="meta-item"><span class="label">Token</span><br><span class="val">${tokenDisplay}</span></div>
+                ${s.contextUsagePercent != null ? `<div class="meta-item"><span class="label">Context</span><br><span class="val">~${s.contextUsagePercent.toFixed(1)}%</span></div>` : ''}
                 ${s.projectPath ? `<div class="meta-item" style="grid-column:1/-1"><span class="label">项目路径</span><br><span class="val">${escapeHtml(s.projectPath)}</span></div>` : ''}
               </div>
               ${(s.contextUsage?.systemTokens ?? 0) + (s.contextUsage?.userTokens ?? 0) + (s.contextUsage?.assistantTokens ?? 0) > 0 ? `

@@ -2,8 +2,9 @@ import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SqliteStore } from '@ai-hud/core';
+import { SqliteStore, loadConfig, saveConfig, maskApiKey } from '@ai-hud/core';
 import type { Session, SessionFilter } from '@ai-hud/core';
+import { fetchCursorModels } from './cursor-api.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -85,6 +86,61 @@ export async function createServer(store: SqliteStore) {
     return reply.send(stats);
   });
 
+  // Cursor API Key 设置
+  app.get('/api/settings/cursor', (_, reply) => {
+    const cfg = loadConfig();
+    const hasKey = !!cfg.cursorApiKey?.trim();
+    return reply.send({
+      hasKey,
+      maskedKey: hasKey ? maskApiKey(cfg.cursorApiKey) : undefined,
+    });
+  });
+
+  app.post<{ Body: { apiKey?: string } }>('/api/settings/cursor', async (req, reply) => {
+    const key = req.body?.apiKey?.trim();
+    const cfg = loadConfig();
+    if (key) {
+      cfg.cursorApiKey = key;
+    } else {
+      delete cfg.cursorApiKey;
+    }
+    saveConfig(cfg);
+    return reply.send({ ok: true, hasKey: !!cfg.cursorApiKey });
+  });
+
+  // Cursor 用量（本地缓存）
+  app.get('/api/cursor-usage', async (_, reply) => {
+    const row = await store.getCursorUsage('models');
+    if (!row) return reply.send({ data: null, fetchedAt: null });
+    try {
+      const data = JSON.parse(row.dataJson);
+      return reply.send({ data, fetchedAt: row.fetchedAt });
+    } catch {
+      return reply.send({ data: null, fetchedAt: row.fetchedAt });
+    }
+  });
+
+  app.post<{ Body: { startDate?: string; endDate?: string } }>(
+    '/api/cursor-usage/refresh',
+    async (req, reply) => {
+      const cfg = loadConfig();
+      const apiKey = cfg.cursorApiKey?.trim();
+      if (!apiKey) {
+        return reply.status(400).send({ error: '未配置 Cursor API Key' });
+      }
+      const startDate = req.body?.startDate ?? '7d';
+      const endDate = req.body?.endDate ?? 'today';
+
+      const result = await fetchCursorModels(apiKey, startDate, endDate);
+      if ('error' in result) {
+        return reply.status(400).send(result);
+      }
+      await store.saveCursorUsage('models', JSON.stringify(result));
+      store.flush();
+      return reply.send({ ok: true, data: result });
+    }
+  );
+
   app.get('/', (_, reply) => {
     return reply.sendFile('index.html');
   });
@@ -92,7 +148,7 @@ export async function createServer(store: SqliteStore) {
   return app;
 }
 
-export const DEFAULT_PORT = 3847;
+export const DEFAULT_PORT = 3849;
 
 export async function startServer(
   port: number = DEFAULT_PORT,

@@ -103,6 +103,7 @@ export class CursorAdapter implements SessionAdapter {
 
           const created = c.createdAt ?? 0;
           const updated = c.lastUpdatedAt ?? created;
+          const pct = c.contextUsagePercent;
           sessions.push({
             id,
             source: 'cursor',
@@ -110,6 +111,7 @@ export class CursorAdapter implements SessionAdapter {
             endedAt: new Date(updated).toISOString(),
             ...(projectPath && { projectPath }),
             ...(c.name && { prompt: c.name.length > 500 ? c.name.slice(0, 500) + '...' : c.name }),
+            ...(typeof pct === 'number' && pct >= 0 && { contextUsagePercent: pct }),
             // Cursor composer.composerData 未提供 token 字段，contextUsage 留空
           });
         }

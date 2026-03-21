@@ -13,6 +13,7 @@ import type { SessionFilter, SessionStore } from './types.js';
 
 interface RawMeta {
   prompt?: string;
+  contextUsagePercent?: number;
   tools?: ToolUsage[];
   agents?: string[];
   skills?: string[];
@@ -46,6 +47,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_model ON sessions(model);
+
+CREATE TABLE IF NOT EXISTS cursor_usage (
+  metric TEXT PRIMARY KEY,
+  data_json TEXT NOT NULL,
+  fetched_at TEXT NOT NULL
+);
 `;
 
 type Db = InstanceType<SqlJsStatic['Database']>;
@@ -115,6 +122,7 @@ export class SqliteStore implements SessionStore {
   private sessionToRow(session: Session): Record<string, unknown> {
     const rawMeta: RawMeta = {};
     if (session.prompt) rawMeta.prompt = session.prompt;
+    if (session.contextUsagePercent != null) rawMeta.contextUsagePercent = session.contextUsagePercent;
     if (session.tools?.length) rawMeta.tools = session.tools;
     if (session.agents?.length) rawMeta.agents = session.agents;
     if (session.skills?.length) rawMeta.skills = session.skills;
@@ -195,6 +203,9 @@ export class SqliteStore implements SessionStore {
       ...(row.model != null && { model: String(row.model) }),
       ...(rawMeta?.prompt && { prompt: rawMeta.prompt }),
       ...(contextUsage && { contextUsage }),
+      ...(rawMeta?.contextUsagePercent != null && {
+        contextUsagePercent: Number(rawMeta.contextUsagePercent),
+      }),
       ...(rawMeta?.tools?.length && { tools: rawMeta.tools }),
       ...(rawMeta?.agents?.length && { agents: rawMeta.agents }),
       ...(rawMeta?.skills?.length && { skills: rawMeta.skills }),
@@ -289,11 +300,40 @@ export class SqliteStore implements SessionStore {
     return this.rowToSession(row);
   }
 
+  async saveCursorUsage(metric: string, dataJson: string): Promise<void> {
+    await this.ensureInit();
+    const fetchedAt = new Date().toISOString();
+    this.db!.run(
+      `INSERT OR REPLACE INTO cursor_usage (metric, data_json, fetched_at) VALUES (:metric, :data_json, :fetched_at)`,
+      { ':metric': metric, ':data_json': dataJson, ':fetched_at': fetchedAt }
+    );
+  }
+
+  async getCursorUsage(metric: string): Promise<{ dataJson: string; fetchedAt: string } | null> {
+    await this.ensureInit();
+    const results = this.db!.exec('SELECT data_json, fetched_at FROM cursor_usage WHERE metric = :metric', {
+      ':metric': metric,
+    });
+    if (results.length === 0 || results[0].values.length === 0) return null;
+    const row = results[0].values[0] as unknown[];
+    return {
+      dataJson: String(row[0]),
+      fetchedAt: String(row[1]),
+    };
+  }
+
+  /** 立即持久化到磁盘（不关闭连接） */
+  flush(): void {
+    if (this.db) {
+      const data = this.db.export();
+      fs.writeFileSync(this.dbPath, Buffer.from(data));
+    }
+  }
+
   close(): void {
     if (this.db) {
       try {
-        const data = this.db.export();
-        fs.writeFileSync(this.dbPath, Buffer.from(data));
+        this.flush();
       } finally {
         this.db.close();
       }

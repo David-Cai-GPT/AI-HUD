@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { Collector, SqliteStore, type Session } from '@ai-hud/core';
-import { OpenCodeAdapter, CursorAdapter, runWithCapture } from '@ai-hud/adapters';
+import { OpenCodeAdapter, CursorAdapter, ClaudeCodeAdapter, runWithCapture } from '@ai-hud/adapters';
 import { startServer, DEFAULT_PORT } from '@ai-hud/web';
 
 const program = new Command();
@@ -20,6 +20,7 @@ program
       const collector = new Collector(store, [
         new OpenCodeAdapter(),
         new CursorAdapter(),
+        new ClaudeCodeAdapter(),
       ]);
       await collector.run();
     } finally {
@@ -44,6 +45,7 @@ program
     const collector = new Collector(store, [
       new OpenCodeAdapter(),
       new CursorAdapter(),
+      new ClaudeCodeAdapter(),
     ]);
     await collector.run();
     setInterval(() => collector.run(), 60_000);

@@ -39,6 +39,20 @@
     <div class="card"><div class="label">总 Token</div><div class="value" id="totalTokens">-</div></div>
   </div>
 
+  <div class="card" style="margin-bottom:24px;">
+    <h2 style="margin:0 0 12px;font-size:14px;color:#666;text-transform:uppercase">Cursor API 用量（Enterprise）</h2>
+    <div id="cursorSettings" style="margin-bottom:12px;">
+      <input type="password" id="cursorApiKey" placeholder="key_xxx..." style="padding:8px 12px;width:280px;border:1px solid #ccc;border-radius:6px;font-size:13px" />
+      <button id="saveCursorKey" style="padding:6px 14px;margin-left:8px;cursor:pointer;border:1px solid #ccc;border-radius:6px;background:#fff;font-size:13px">保存 Key</button>
+      <span id="cursorKeyStatus" style="margin-left:8px;font-size:12px;color:#666"></span>
+    </div>
+    <div id="cursorUsageSection" style="display:none">
+      <button id="refreshCursorUsage" style="padding:6px 14px;cursor:pointer;border:1px solid #ccc;border-radius:6px;background:#fff;font-size:13px;margin-bottom:8px">刷新用量</button>
+      <div id="cursorUsageTable"></div>
+      <p id="cursorFetchedAt" class="footer" style="margin-top:8px"></p>
+    </div>
+  </div>
+
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
     <h2 style="margin:0;">会话列表</h2>
     <button id="refreshBtn" style="padding:6px 14px;cursor:pointer;border:1px solid #ccc;border-radius:6px;background:#fff;font-size:13px;">刷新</button>
@@ -46,7 +60,8 @@
   <div class="tabs" id="tabs">
     <button class="tab active" data-source="">全部</button>
     <button class="tab" data-source="opencode">OpenCode</button>
-    <!-- 后续扩展: <button class="tab" data-source="cursor">Cursor</button> -->
+    <button class="tab" data-source="cursor">Cursor</button>
+    <button class="tab" data-source="claude-code">Claude Code</button>
   </div>
   <div id="sessions">
     <div class="loading">加载中...</div>
@@ -89,12 +104,13 @@
             <tbody>
               ${sessions.length === 0 ? '<tr><td colspan="5" class="loading">暂无数据</td></tr>' : sessions.map(s => {
                 const tokens = (s.contextUsage?.inputTokens ?? 0) + (s.contextUsage?.outputTokens ?? 0);
+                const tokenDisplay = tokens > 0 ? tokens.toLocaleString() : '-';
                 return `<tr onclick="location.href='session.html?id=${encodeURIComponent(s.id)}'" style="cursor:pointer">
                   <td class="id-cell" title="${escapeHtml(s.id)}">${escapeHtml(s.id)}</td>
                   <td>${escapeHtml(s.source)}</td>
                   <td>${escapeHtml(s.model || '-')}</td>
                   <td>${escapeHtml(formatTime(s.startedAt))}</td>
-                  <td>${tokens.toLocaleString()}</td>
+                  <td>${tokenDisplay}</td>
                 </tr>`;
               }).join('')}
             </tbody>
@@ -133,6 +149,9 @@
       try {
         document.getElementById('refreshBtn').disabled = true;
         await Promise.all([loadOverview(), loadSessions()]);
+        if (document.getElementById('cursorUsageSection').style.display !== 'none') {
+          await loadCursorUsage();
+        }
       } catch (e) {
         document.getElementById('sessions').innerHTML = '<div class="error">加载失败: ' + escapeHtml(e.message) + '</div>';
       } finally {
@@ -142,7 +161,103 @@
 
     document.getElementById('refreshBtn').onclick = refresh;
 
+    // Cursor API 设置与用量
+    async function loadCursorSettings() {
+      const res = await fetch('/api/settings/cursor');
+      const s = await res.json();
+      const input = document.getElementById('cursorApiKey');
+      const status = document.getElementById('cursorKeyStatus');
+      if (s.hasKey) {
+        input.placeholder = s.maskedKey || '已配置';
+        input.value = '';
+        status.textContent = '已配置';
+      } else {
+        input.placeholder = 'key_xxx...';
+        status.textContent = '';
+      }
+    }
+
+    document.getElementById('saveCursorKey').onclick = async () => {
+      const key = document.getElementById('cursorApiKey').value.trim();
+      const res = await fetch('/api/settings/cursor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: key || null })
+      });
+      const d = await res.json();
+      document.getElementById('cursorApiKey').value = '';
+      await loadCursorSettings();
+      if (d.hasKey) {
+        document.getElementById('cursorUsageSection').style.display = 'block';
+        loadCursorUsage();
+      }
+    };
+
+    async function loadCursorUsage() {
+      const res = await fetch('/api/cursor-usage');
+      const { data, fetchedAt } = await res.json();
+      const section = document.getElementById('cursorUsageSection');
+      const tableDiv = document.getElementById('cursorUsageTable');
+      const fetchedEl = document.getElementById('cursorFetchedAt');
+      if (data?.data?.length) {
+        section.style.display = 'block';
+        const allModels = new Set();
+        data.data.forEach(row => {
+          Object.keys(row.model_breakdown || {}).forEach(m => allModels.add(m));
+        });
+        const models = [...allModels].sort();
+        const headerRow = `<tr><th>日期</th>${models.map(m => `<th>${escapeHtml(m)}</th>`).join('')}</tr>`;
+        const rows = data.data.map(row => {
+          const mb = row.model_breakdown || {};
+          const cells = models.map(m => {
+            const v = mb[m];
+            const n = (v && typeof v === 'object' && 'messages' in v) ? v.messages : 0;
+            return `<td>${n > 0 ? n.toLocaleString() : '-'}</td>`;
+          }).join('');
+          return `<tr><td>${escapeHtml(row.date || '-')}</td>${cells}</tr>`;
+        });
+        tableDiv.innerHTML = `<div class="table-wrap"><table><thead>${headerRow}</thead><tbody>${rows.join('')}</tbody></table></div>`;
+        fetchedEl.textContent = '更新时间: ' + (fetchedAt ? new Date(fetchedAt).toLocaleString('zh-CN') : '-');
+      } else if (fetchedAt) {
+        section.style.display = 'block';
+        tableDiv.innerHTML = '<p class="loading">暂无用量数据</p>';
+        fetchedEl.textContent = '更新时间: ' + new Date(fetchedAt).toLocaleString('zh-CN');
+      } else {
+        section.style.display = 'block';
+        tableDiv.innerHTML = '<p class="loading">点击「刷新用量」从 Cursor API 拉取（需 Enterprise 团队）</p>';
+        fetchedEl.textContent = '';
+      }
+    }
+
+    document.getElementById('refreshCursorUsage').onclick = async () => {
+      const btn = document.getElementById('refreshCursorUsage');
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/cursor-usage/refresh', { method: 'POST' });
+        const d = await res.json();
+        if (!res.ok) {
+          alert(d.message || d.error || '刷新失败');
+        } else {
+          await loadCursorUsage();
+        }
+      } catch (e) {
+        alert('刷新失败: ' + (e.message || e));
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    async function initCursorSection() {
+      await loadCursorSettings();
+      const s = await (await fetch('/api/settings/cursor')).json();
+      if (s.hasKey) {
+        document.getElementById('cursorUsageSection').style.display = 'block';
+        await loadCursorUsage();
+      }
+    }
+
     refresh();
+    initCursorSection();
     setInterval(refresh, 30_000);
   </script>
 </body>
