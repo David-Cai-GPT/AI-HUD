@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { Collector, SqliteStore, type Session } from '@ai-hud/core';
-import { OpenCodeAdapter, runWithCapture } from '@ai-hud/adapters';
+import { OpenCodeAdapter, CursorAdapter, runWithCapture } from '@ai-hud/adapters';
 import { startServer, DEFAULT_PORT } from '@ai-hud/web';
 
 const program = new Command();
@@ -17,7 +17,10 @@ program
   .action(async () => {
     const store = new SqliteStore();
     try {
-      const collector = new Collector(store, [new OpenCodeAdapter()]);
+      const collector = new Collector(store, [
+        new OpenCodeAdapter(),
+        new CursorAdapter(),
+      ]);
       await collector.run();
     } finally {
       store.close();
@@ -38,7 +41,10 @@ program
     const store = new SqliteStore();
     await startServer(port, store);
 
-    const collector = new Collector(store, [new OpenCodeAdapter()]);
+    const collector = new Collector(store, [
+      new OpenCodeAdapter(),
+      new CursorAdapter(),
+    ]);
     await collector.run();
     setInterval(() => collector.run(), 60_000);
     console.log('后台采集已启动，每 60 秒执行一次');
