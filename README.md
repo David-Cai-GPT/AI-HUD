@@ -32,6 +32,15 @@ pnpm run cli -- collect
 # 查看最近会话
 pnpm run cli -- status
 
+# 实时查看当前运行中的 AI harness/agent 进程（默认每 2 秒刷新）
+pnpm run cli -- monitor
+
+# 指定刷新间隔
+pnpm run cli -- monitor -i 1
+
+# 仅采样一次，适合脚本或调试
+pnpm run cli -- monitor --once
+
 # 查看会话详情（含 prompt、tools、skills、MCP）
 pnpm run cli -- session show <session_id>
 
@@ -69,6 +78,17 @@ ai-hud serve --port 8080  # 指定端口
 
 **Claude Code 采集说明**：被动扫描 `~/.claude/projects` 下的 session JSONL 文件，解析模型、token、成本、工具调用等并入库。
 
+## 实时 Monitor
+
+`ai-hud monitor` 是终端实时运行态 dashboard，用于查看当前 macOS 上正在运行的 AI harness/agent 进程。
+
+- 默认每 2 秒刷新一次，`-i <seconds>` 可指定刷新间隔
+- `--once` 只采样一次，适合脚本或调试
+- 按进程树 Root PID 分组展示，便于区分同一 session 的 runtime/helper 进程
+- 展示 PID、Root、工具名、状态、运行时长、CPU、内存和最近 activity
+- Codex 会按进程启动时间近似关联 `~/.codex/sessions`，并读取 `~/.codex/log/codex-tui.log` 展示最近工具调用摘要
+- Hermes 和 OpenClaw 当前提供进程运行态监控
+
 ## 支持的来源
 
 | 来源 | 采集方式 | 状态 |
@@ -76,6 +96,8 @@ ai-hud serve --port 8080  # 指定端口
 | OpenCode | 流式（`opencode run --format json`）+ 被动（`opencode session list` + `export`） | ✅ |
 | Cursor | 被动扫描本地 workspaceStorage + API 用量（Enterprise） | ✅ |
 | Claude Code | 被动扫描 ~/.claude/projects JSONL | ✅ |
+| Hermes | 进程运行态监控 | ✅ |
+| OpenClaw | 进程运行态监控 | ✅ |
 
 ## 项目结构
 

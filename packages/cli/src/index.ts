@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { Collector, SqliteStore, type Session } from '@ai-hud/core';
+import {
+  Collector,
+  ProcessHarnessDiscoverer,
+  SqliteStore,
+  type HarnessProcess,
+  type Session,
+} from '@ai-hud/core';
 import { OpenCodeAdapter, CursorAdapter, ClaudeCodeAdapter, runWithCapture } from '@ai-hud/adapters';
 import { startServer, DEFAULT_PORT } from '@ai-hud/web';
 
@@ -79,6 +85,44 @@ program
   });
 
 program
+  .command('monitor')
+  .description('Show live harness processes in a terminal dashboard')
+  .option('--once', 'Render once and exit')
+  .option('-i, --interval <seconds>', 'Refresh interval in seconds', '2')
+  .option('-a, --all', 'Show all processes instead of AI harness matches')
+  .option('-k, --keyword <keyword...>', 'Additional process keywords to match')
+  .action(async (opts: { once?: boolean; interval: string; all?: boolean; keyword?: string[] }) => {
+    const discoverer = new ProcessHarnessDiscoverer();
+    const intervalMs = Math.max(500, (parseFloat(opts.interval) || 2) * 1000);
+    const keywords = opts.keyword?.length ? opts.keyword : undefined;
+
+    const render = async () => {
+      const processes = await discoverer.discover({
+        includeAll: Boolean(opts.all),
+        keywords,
+      });
+      printMonitor(processes, { clear: !opts.once });
+    };
+
+    await render();
+    if (opts.once) return;
+
+    const timer = setInterval(() => {
+      render().catch((err) => {
+        console.error('monitor failed:', err);
+      });
+    }, intervalMs);
+
+    const shutdown = () => {
+      clearInterval(timer);
+      process.stdout.write('\x1b[?25h');
+      process.exit(0);
+    };
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+  });
+
+program
   .command('session')
   .description('Session commands')
   .addCommand(
@@ -118,7 +162,7 @@ program
       })
   );
 
-program.parse();
+program.parse(sanitizeArgv(process.argv));
 
 function printSessionsTable(sessions: Session[]): void {
   const W = { id: 10, source: 12, model: 16, time: 16, token: 10, cost: 14 };
@@ -194,4 +238,248 @@ function formatTime(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+function sanitizeArgv(argv: string[]): string[] {
+  const separatorIndex = argv.indexOf('--', 2);
+  if (separatorIndex < 0) return argv;
+  return [...argv.slice(0, separatorIndex), ...argv.slice(separatorIndex + 1)];
+}
+
+function printMonitor(processes: HarnessProcess[], options: { clear: boolean }): void {
+  const terminalWidth = process.stdout.columns || 120;
+  if (options.clear) {
+    process.stdout.write('\x1b[?25l\x1b[2J\x1b[H');
+  }
+
+  const now = new Date();
+  const groups = groupByRoot(processes);
+  const summary = summarizeProcesses(processes);
+  const width = Math.max(80, terminalWidth);
+
+  console.log(color('AI-HUD', 'cyan', true) + color(' live harness monitor', 'dim'));
+  console.log(
+    [
+      badge(`${processes.length} proc`, 'cyan'),
+      badge(`${groups.length} session`, 'magenta'),
+      statusBadge('running', summary.running),
+      statusBadge('waiting', summary.waiting),
+      statusBadge('failed', summary.failed),
+      color(`refreshed ${formatClock(now)}`, 'dim'),
+    ].filter(Boolean).join('  ')
+  );
+  console.log(color('─'.repeat(Math.min(width, 140)), 'dim'));
+
+  if (processes.length === 0) {
+    console.log(color('No matching harness processes found.', 'yellow'));
+    console.log(color('Try: ai-hud monitor --all or ai-hud monitor -k codex claude opencode', 'dim'));
+    return;
+  }
+
+  const widths = computeMonitorWidths(terminalWidth);
+  const header =
+    pad('', widths.gutter) +
+    pad('PID', widths.pid) +
+    pad('Root', widths.root) +
+    pad('Tool', widths.tool) +
+    pad('State', widths.state) +
+    pad('Age', widths.age) +
+    pad('CPU', widths.cpu) +
+    pad('MEM', widths.mem) +
+    pad('Activity', widths.command);
+
+  console.log(color(header, 'dim'));
+  console.log(color('─'.repeat(Math.min(visibleLength(header), terminalWidth)), 'dim'));
+
+  let usedRows = 5;
+  const maxRows = Math.max(1, (process.stdout.rows || 30) - 8);
+
+  for (const group of groups) {
+    if (usedRows >= maxRows) break;
+    const primary = group[0];
+    const title = `${primary.name} root:${primary.rootPid ?? primary.pid}`;
+    const thread = primary.activityThreadId ? ` thread:${primary.activityThreadId.slice(0, 8)}` : '';
+    console.log(color(`┌ ${title}${thread}`, 'blue', true));
+    usedRows += 1;
+
+    for (const proc of group) {
+      if (usedRows >= maxRows) break;
+      console.log(formatMonitorRow(proc, widths));
+      usedRows += 1;
+    }
+  }
+
+  console.log(color('─'.repeat(Math.min(width, 140)), 'dim'));
+  console.log(color('Ctrl+C exit  |  --once sample once  |  -i <seconds> refresh interval  |  -k <words> filter', 'dim'));
+}
+
+function computeMonitorWidths(total: number): MonitorWidths {
+  const fixed = 2 + 8 + 8 + 18 + 11 + 10 + 8 + 8;
+  return {
+    gutter: 2,
+    pid: 8,
+    root: 8,
+    tool: 18,
+    state: 11,
+    age: 10,
+    cpu: 8,
+    mem: 8,
+    command: Math.max(24, total - fixed),
+  };
+}
+
+function pad(value: string, width: number): string {
+  const truncated = truncateVisible(value, width - 1);
+  return `${truncated}${' '.repeat(Math.max(0, width - visibleLength(truncated)))}`;
+}
+
+function truncateVisible(value: string, width: number): string {
+  if (visibleLength(value) <= width) return value;
+  if (width <= 1) return stripAnsi(value).slice(0, width);
+  return `${stripAnsi(value).slice(0, Math.max(0, width - 3))}...`;
+}
+
+function formatPercent(value: number | undefined): string {
+  return value == null ? '-' : `${value.toFixed(1)}%`;
+}
+
+function formatMonitorRow(process: HarnessProcess, widths: MonitorWidths): string {
+  const action = formatActivity(process);
+  return (
+    color('│ ', 'dim') +
+    pad(String(process.pid), widths.pid) +
+    pad(String(process.rootPid ?? process.pid), widths.root) +
+    pad(process.name, widths.tool) +
+    color(pad(process.state, widths.state), stateColor(process.state), process.state !== 'unknown') +
+    pad(formatAge(process.elapsedSeconds), widths.age) +
+    color(pad(formatPercent(process.cpuPercent), widths.cpu), percentColor(process.cpuPercent)) +
+    color(pad(formatPercent(process.memoryPercent), widths.mem), percentColor(process.memoryPercent)) +
+    color(truncateVisible(action, widths.command), process.currentAction ? 'white' : 'dim')
+  );
+}
+
+interface MonitorWidths {
+  gutter: number;
+  pid: number;
+  root: number;
+  tool: number;
+  state: number;
+  age: number;
+  cpu: number;
+  mem: number;
+  command: number;
+}
+
+function groupByRoot(processes: HarnessProcess[]): HarnessProcess[][] {
+  const byRoot = new Map<number, HarnessProcess[]>();
+  for (const process of processes) {
+    const root = process.rootPid ?? process.pid;
+    const group = byRoot.get(root) ?? [];
+    group.push(process);
+    byRoot.set(root, group);
+  }
+
+  return [...byRoot.values()].sort((a, b) => {
+    const aCpu = a.reduce((sum, process) => sum + (process.cpuPercent ?? 0), 0);
+    const bCpu = b.reduce((sum, process) => sum + (process.cpuPercent ?? 0), 0);
+    return bCpu - aCpu;
+  });
+}
+
+function summarizeProcesses(processes: HarnessProcess[]): Record<'running' | 'waiting' | 'failed', number> {
+  return {
+    running: processes.filter((process) => process.state === 'running').length,
+    waiting: processes.filter((process) => process.state === 'waiting').length,
+    failed: processes.filter((process) => process.state === 'failed').length,
+  };
+}
+
+function statusBadge(state: 'running' | 'waiting' | 'failed', count: number): string {
+  if (count === 0) return '';
+  const theme = state === 'running' ? 'green' : state === 'waiting' ? 'yellow' : 'red';
+  return badge(`${state} ${count}`, theme);
+}
+
+function badge(text: string, theme: ColorName): string {
+  return `${color('[', 'dim')}${color(text, theme, true)}${color(']', 'dim')}`;
+}
+
+function stateColor(state: string): ColorName {
+  if (state === 'running') return 'green';
+  if (state === 'waiting') return 'yellow';
+  if (state === 'failed') return 'red';
+  if (state === 'idle') return 'blue';
+  return 'dim';
+}
+
+function percentColor(value: number | undefined): ColorName {
+  if (value == null) return 'dim';
+  if (value >= 50) return 'red';
+  if (value >= 15) return 'yellow';
+  return 'green';
+}
+
+function formatActivity(process: HarnessProcess): string {
+  const action = process.currentAction ?? process.command;
+  const parts: string[] = [];
+
+  if (process.activityAt) parts.push(formatActivityTime(process.activityAt));
+  if (process.activityThreadId) parts.push(process.activityThreadId.slice(0, 8));
+
+  return parts.length ? `${parts.join(' ')}  ${action}` : action;
+}
+
+function formatActivityTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return formatClock(date);
+}
+
+function formatAge(seconds: number | undefined): string {
+  if (seconds == null || Number.isNaN(seconds)) return '-';
+  if (seconds < 60) return `${seconds}s`;
+
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  if (hours < 24) return `${hours}h${restMinutes}m`;
+
+  const days = Math.floor(hours / 24);
+  return `${days}d${hours % 24}h`;
+}
+
+function formatClock(date: Date): string {
+  const h = String(date.getHours()).padStart(2, '0');
+  const m = String(date.getMinutes()).padStart(2, '0');
+  const s = String(date.getSeconds()).padStart(2, '0');
+  return `${h}:${m}:${s}`;
+}
+
+type ColorName = 'blue' | 'cyan' | 'dim' | 'green' | 'magenta' | 'red' | 'white' | 'yellow';
+
+const ANSI: Record<ColorName, string> = {
+  blue: '\x1b[34m',
+  cyan: '\x1b[36m',
+  dim: '\x1b[2m',
+  green: '\x1b[32m',
+  magenta: '\x1b[35m',
+  red: '\x1b[31m',
+  white: '\x1b[37m',
+  yellow: '\x1b[33m',
+};
+
+function color(value: string, name: ColorName, bold = false): string {
+  if (!process.stdout.isTTY) return value;
+  const weight = bold ? '\x1b[1m' : '';
+  return `${weight}${ANSI[name]}${value}\x1b[0m`;
+}
+
+function visibleLength(value: string): number {
+  return stripAnsi(value).length;
+}
+
+function stripAnsi(value: string): string {
+  return value.replace(/\x1b\[[0-9;]*m/g, '');
 }
